@@ -27,3 +27,5 @@ jobs:
       - name: Run tests
         run: mvn test
 
+      - name: Deliberate failure for CI demo
+        run: exit 1
