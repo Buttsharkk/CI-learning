@@ -1,30 +1,36 @@
 package com.stocks.service;
 
-import java.util.HashMap;
-import java.util.Map;
+import com.stocks.model.HistoricalPrice;
+import com.stocks.model.Stock;
+import com.stocks.repository.HistoricalPriceRepository;
+import com.stocks.repository.StockRepository;
+import org.springframework.stereotype.Service;
 
+import java.util.List;
+import java.util.Optional;
+
+@Service
 public class StockServiceImpl implements StockService {
-    private Map<String, Stock> stocks = new HashMap<>();
+
+    private final StockRepository stockRepository;
+    private final HistoricalPriceRepository priceRepository;
+
+    public StockServiceImpl(StockRepository stockRepository, HistoricalPriceRepository priceRepository) {
+        this.stockRepository = stockRepository;
+        this.priceRepository = priceRepository;
+    }
+
+    @Override public List<Stock> getAllStocks() { return stockRepository.findAll(); }
+    @Override public Optional<Stock> getStockById(Long id) { return stockRepository.findById(id); }
 
     @Override
     public Stock addStock(Stock stock) {
-        if (stocks.containsKey(stock.symbol())) {
-            throw new IllegalArgumentException("Stock with symbol " + stock.symbol() + " already exists");
-        }
-        stocks.put(stock.symbol(), stock);
-        return stock;
+        stockRepository.findBySymbol(stock.symbol()).ifPresent(s -> {
+            throw new IllegalArgumentException("Duplicate symbol: " + stock.symbol());
+        });
+        return stockRepository.save(stock);
     }
 
-    @Override
-    public Stock getStock(String symbol) {
-        return stocks.get(symbol);
-    }
-
-    @Override
-    public void deleteStock(String symbol) {
-        stocks.remove(symbol);
-    }
+    @Override public HistoricalPrice addPrice(HistoricalPrice price) { return priceRepository.save(price); }
+    @Override public List<HistoricalPrice> getPriceHistory(Long stockId) { return priceRepository.findByStockId(stockId); }
 }
-
-
-

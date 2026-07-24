@@ -1,167 +1,187 @@
-# Module 09 Lab — Continuous Integration with GitHub Actions
+# Module 08 Lab — Introduction to Docker
 
 ## Objective
-Add a GitHub Actions CI workflow to the Stock Tracker Spring Boot application so that every
-push and pull request automatically builds the project and runs the tests.
+Run a MySQL database as a Docker container, then write a `Dockerfile` for the Stock Tracker
+Spring Boot application, build and run it as a second container, and connect the two together.
+Finally, add a simple HTML/JS frontend served from inside the Spring Boot container.
 
 ## Prerequisites
-- A GitHub account
-- Git installed locally
-- The Module 06 solution (or your own completed stocks application) available locally
-- Docker not required for this lab — the tests use Mockito and do not need a database
+- Docker Desktop installed and running (`docker --version` should respond)
+- Java 21 and Maven installed locally
 
-## Overview
-You will:
-1. Push the stocks application to your own GitHub repository
-2. Create a `.github/workflows/ci.yml` workflow file
-3. Push the workflow and watch GitHub Actions run it
-4. Introduce a deliberate test failure and observe the CI failure
-5. Fix the failure and watch CI go green again
+## What is provided
+The `labs/08-docker/` folder contains a complete Spring Boot application (the stocks REST API
+from Module 06). It connects to MySQL on `localhost:3306`. On startup it seeds three stocks.
 
 ---
 
 ## Steps
 
-### Step 1 — Create a GitHub repository
-1. Log in to GitHub and create a new repository called `stock-tracker`
-2. Leave it empty (do not add README or .gitignore via the UI)
-
-### Step 2 — Push the application to GitHub
-From the Module 06 solution directory (or your own completed stocks app):
+### Step 1 — Run MySQL in a container
+No MySQL installation needed. Pull and run the official MySQL 8 image:
 
 ```bash
-git init
-git add .
-git commit -m "Initial commit - stocks REST API"
-git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/stock-tracker.git
-git push -u origin main
+docker run -d \
+  --name stocksdb \
+  -e MYSQL_ROOT_PASSWORD=rootpass \
+  -e MYSQL_DATABASE=stocksdb \
+  -e MYSQL_USER=appuser \
+  -e MYSQL_PASSWORD=apppass \
+  -p 3306:3306 \
+  mysql:8
 ```
 
-Open the repository on GitHub and confirm the source code is there.
+Wait about 10 seconds then check it is ready:
+
+```bash
+docker logs stocksdb
+# Look for the line: ready for connections
+```
 
 ---
 
-### Step 3 — Create the workflow file
-In your project, create the file `.github/workflows/ci.yml`.
+### Step 2 — Verify the app runs locally against the containerised MySQL
+```bash
+cd labs/08-docker
+mvn spring-boot:run
+```
 
+Visit `http://localhost:8080/api/stocks` — you should see a JSON array of three stocks
+being served from MySQL running inside Docker.
+
+Stop the app (`Ctrl+C`) before moving on.
+
+---
+
+### Step 3 — Write the Dockerfile
+Create a file called `Dockerfile` (no extension) in the `labs/08-docker/` folder.
 Complete each TODO:
 
-```yaml
-# TODO 1: Give the workflow a name, e.g. "CI"
-name: ???
+```dockerfile
+# Stage 1: build the JAR
+# TODO 1: Start FROM the maven:3.9-eclipse-temurin-21 image. Name this stage 'build'.
+FROM ???
 
-# TODO 2: Set the trigger - run on push AND pull_request to the main branch
-on:
-  push:
-    branches: [ ??? ]
-  pull_request:
-    branches: [ ??? ]
+WORKDIR /app
 
-jobs:
-  build:
-    # TODO 3: Choose a runner - use the latest Ubuntu hosted runner
-    runs-on: ???
+# TODO 2: Copy pom.xml into the working directory
+COPY ??? .
 
-    steps:
-      # TODO 4: Check out the repository code using the official action
-      - name: Checkout source
-        uses: actions/???@v4
+# TODO 3: Download all dependencies into the image layer cache
+#         Hint: mvn dependency:go-offline -q
+RUN ???
 
-      # TODO 5: Set up Java 21 (Temurin distribution) with Maven cache
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '???'
-          distribution: '???'
-          cache: ???
+# TODO 4: Copy the src directory into the image
+COPY ??? ./src
 
-      # TODO 6: Build the project with Maven, skipping tests
-      - name: Build with Maven
-        run: mvn -B package -DskipTests
+# TODO 5: Package the application, skipping tests
+#         Hint: mvn package -DskipTests -q
+RUN ???
 
-      # TODO 7: Run the tests
-      - name: Run tests
-        run: ???
+# Stage 2: run the JAR in a minimal image
+# TODO 6: Start FROM eclipse-temurin:21-jre-alpine
+FROM ???
+
+WORKDIR /app
+
+# TODO 7: Copy the JAR from the build stage into this image as app.jar
+#         Hint: use --from=build and /app/target/*.jar
+COPY ??? app.jar
+
+# TODO 8: Tell Docker which port the app listens on
+EXPOSE ???
+
+# TODO 9: Set the command to run the JAR
+#         Hint: ENTRYPOINT with JSON array syntax
+ENTRYPOINT ???
 ```
 
 ---
 
-### Step 4 — Push the workflow and watch it run
+### Step 4 — Build the image
 ```bash
-git add .github/workflows/ci.yml
-git commit -m "Add CI workflow"
-git push
+docker build -t stock-app:v1 .
 ```
 
-Go to your repository on GitHub and click the **Actions** tab.
-You should see the workflow run appear within a few seconds.
-
-Click into the run, then into the `build` job, and expand each step to see the log output.
-The run should complete with a green tick.
-
----
-
-### Step 5 — Introduce a deliberate failure
-Open `src/main/java/com/stocks/service/StockServiceImpl.java`.
-
-Find the `addStock` method and change the duplicate-check condition so it always throws:
-
-```java
-// Temporarily break the duplicate check
-throw new IllegalArgumentException("Always broken: " + stock.symbol());
-```
-
-Commit and push:
+Watch the output. Run the build a second time and observe the CACHED layers:
 
 ```bash
-git add src/main/java/com/stocks/service/StockServiceImpl.java
-git commit -m "Break addStock for CI demo"
-git push
+docker build -t stock-app:v1 .
 ```
-
-Watch the **Actions** tab — the run should turn red. Click into the failure and find which
-test caught it and why.
 
 ---
 
-### Step 6 — Fix the failure and go green
-Revert your change to `StockServiceImpl`:
+### Step 5 — Run the app container
+The app container needs to reach MySQL. We pass the datasource URL as an environment variable
+using `host.docker.internal` so the app container can reach the MySQL container via the host:
 
 ```bash
-git revert HEAD
-git push
+docker run -d \
+  -p 8080:8080 \
+  --name stock-app \
+  -e SPRING_DATASOURCE_URL="jdbc:mysql://host.docker.internal:3306/stocksdb?useSSL=false&allowPublicKeyRetrieval=true" \
+  -e SPRING_DATASOURCE_USERNAME=appuser \
+  -e SPRING_DATASOURCE_PASSWORD=apppass \
+  stock-app:v1
 ```
 
-Watch the Actions tab — CI should go green again.
+Verify it is running and test the API:
+
+```bash
+docker ps
+docker logs stock-app
+curl http://localhost:8080/api/stocks
+```
 
 ---
 
-### Step 7 — Add a build status badge (stretch)
-GitHub generates a badge URL for your workflow. Find it at:
+### Step 6 — Add a frontend
+Create `src/main/resources/static/index.html` with an HTML page that:
+1. Has a heading "Stock Tracker"
+2. Uses `fetch('/api/stocks')` to load stocks from the API
+3. Displays them in a `<table>` with columns: Symbol, Company, Sector, Exchange
 
-**Actions tab > your workflow > top-right "..." menu > Create status badge**
+Rebuild and re-run:
 
-Copy the markdown and paste it into your `README.md`:
-
-```markdown
-![CI](https://github.com/YOUR-USERNAME/stock-tracker/actions/workflows/ci.yml/badge.svg)
+```bash
+docker stop stock-app && docker rm stock-app
+docker build -t stock-app:v2 .
+docker run -d -p 8080:8080 --name stock-app \
+  -e SPRING_DATASOURCE_URL="jdbc:mysql://host.docker.internal:3306/stocksdb?useSSL=false&allowPublicKeyRetrieval=true" \
+  -e SPRING_DATASOURCE_USERNAME=appuser \
+  -e SPRING_DATASOURCE_PASSWORD=apppass \
+  stock-app:v2
 ```
 
-Commit and push — the badge appears on your repo's home page.
+Open `http://localhost:8080` in a browser — your table should be populated with stocks.
+
+---
+
+### Step 7 — Explore useful Docker commands
+```bash
+docker ps                          # list running containers
+docker ps -a                       # include stopped containers
+docker logs stock-app              # view application output
+docker exec -it stock-app sh       # shell inside the container
+docker stop stock-app              # stop
+docker rm stock-app                # remove
+docker images                      # list local images
+docker rmi stock-app:v1            # remove an image
+docker stop stocksdb && docker rm stocksdb
+```
 
 ---
 
 ## Acceptance Criteria
-- The workflow file is at `.github/workflows/ci.yml`
-- A push to `main` triggers the workflow automatically
-- Both the build step and the test step appear as separate steps in the Actions UI
-- A deliberate test failure causes the workflow run to show red
-- Fixing the failure and pushing again returns CI to green
+- MySQL runs as a Docker container with no local MySQL installation
+- `docker build` completes without errors
+- The app container starts and `GET /api/stocks` returns three stocks
+- The second build (unchanged `pom.xml`) shows CACHED for the dependency layer
+- `http://localhost:8080` serves your HTML page with stocks loaded from the API
 
 ## Key Questions
-1. What is the difference between `push` and `pull_request` as triggers?
-2. Why do we separate `mvn package -DskipTests` and `mvn test` into two steps?
-3. What does `cache: maven` do, and why does it matter for build speed?
-4. What is a GitHub-hosted runner, and what is installed on it by default?
-5. If your tests needed a real MySQL database, how would you provide one in the workflow?
+1. Why do we COPY `pom.xml` and run `mvn dependency:go-offline` before copying `src/`?
+2. Why does the final image use `eclipse-temurin:21-jre-alpine` instead of the Maven image?
+3. What is the difference between `EXPOSE` and `-p` in `docker run`?
+4. Why do we pass `SPRING_DATASOURCE_URL` as an environment variable rather than baking it into `application.properties`?
+5. What would happen to the data in MySQL if you ran `docker rm stocksdb`?
